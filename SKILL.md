@@ -1,3 +1,16 @@
+---
+name: sync-discord-identity
+description: Sync a Discord bot profile into an OpenClaw agent IDENTITY.md, save the avatar under workspace/avatars, and safely add Avatar and Discord metadata.
+version: 0.1.0
+metadata:
+  openclaw:
+    requires:
+      bins:
+        - python3
+        - curl
+    homepage: https://github.com/0xli/sync-discord-identity
+---
+
 # OpenClaw Skill (Identity • Discord bot profile sync • Avatar bootstrap)
 
 Use this skill when you need to inspect or update an OpenClaw agent identity, especially when the agent is connected to a Discord bot and you want to synchronize Discord profile data into `IDENTITY.md`.
@@ -194,6 +207,28 @@ python scripts/sync_discord_identity.py \
   --discord-json discord_me.json \
   --force-avatar
 ```
+
+## Install and publish notes
+
+To publish this skill to ClawHub:
+
+```bash
+clawhub login
+clawhub skill publish . \
+  --slug sync-discord-identity \
+  --name "sync-discord-identity" \
+  --version 0.1.0 \
+  --changelog "Initial release" \
+  --tags latest
+```
+
+For users to install it:
+
+```bash
+openclaw skills install sync-discord-identity
+```
+
+Start a new OpenClaw session after installing so the skill is loaded.
 
 ## Success criteria
 
