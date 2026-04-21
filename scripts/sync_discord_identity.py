@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 DISCORD_ME_URL = "https://discord.com/api/v10/users/@me"
+USER_AGENT = "sync-discord-identity/0.1"
 
 
 def sanitize_filename(name: str) -> str:
@@ -27,7 +28,41 @@ def load_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def default_config_path(workspace: Path) -> Path:
+    workspace_config = workspace / "openclaw.json"
+    if workspace_config.exists():
+        return workspace_config
+
+    for parent in (workspace, *workspace.parents):
+        config_path = parent / "openclaw.json"
+        if config_path.exists():
+            return config_path
+
+    return workspace_config
+
+
+def infer_channel_name(workspace: Path) -> Optional[str]:
+    profiles_dir = workspace / "profiles"
+    if not profiles_dir.is_dir():
+        return None
+
+    usernames: List[str] = []
+    profile_paths = sorted(profiles_dir.glob("local:*.json")) or sorted(profiles_dir.glob("*.json"))
+    for profile_path in profile_paths:
+        try:
+            profile = load_json(profile_path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        username = profile.get("username")
+        if isinstance(username, str) and username.strip():
+            usernames.append(username.strip())
+
+    unique = sorted(set(usernames))
+    return unique[0] if len(unique) == 1 else None
+
+
 def http_get_json(url: str, headers: Dict[str, str]) -> Dict[str, Any]:
+    headers = {"User-Agent": USER_AGENT, **headers}
     req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req) as resp:
         return json.loads(resp.read().decode("utf-8"))
@@ -35,7 +70,8 @@ def http_get_json(url: str, headers: Dict[str, str]) -> Dict[str, Any]:
 
 def download_file(url: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with urllib.request.urlopen(url) as r, open(dest, "wb") as f:
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req) as r, open(dest, "wb") as f:
         shutil.copyfileobj(r, f)
 
 
@@ -131,9 +167,10 @@ def upsert_avatar(lines: List[str], avatar_url: str, force_avatar: bool) -> List
         return lines
 
     existing = lines[idx].strip()
+    existing_value = re.sub(r"^\s*[-*]\s*\*\*Avatar:\*\*\s*", "", existing).strip()
     if existing == new_line:
         return lines
-    if not force_avatar:
+    if existing_value and not force_avatar:
         raise RuntimeError(
             f"IDENTITY.md already has a different Avatar field:\n  existing: {existing}\n  desired:  {new_line}\nUse --force-avatar to replace it."
         )
@@ -164,14 +201,17 @@ def ensure_identity_lines(identity_path: Path) -> List[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Sync Discord bot metadata into OpenClaw IDENTITY.md")
     parser.add_argument("--workspace", required=True, help="Path to the current OpenClaw workspace")
-    parser.add_argument("--config", help="Path to openclaw.json (default: <workspace>/openclaw.json)")
+    parser.add_argument(
+        "--config",
+        help="Path to openclaw.json (default: <workspace>/openclaw.json, or nearest parent openclaw.json)",
+    )
     parser.add_argument("--identity", help="Path to IDENTITY.md (default: <workspace>/IDENTITY.md)")
     parser.add_argument("--channel", help="Discord channel name to use when multiple Discord channels exist")
     parser.add_argument("--force-avatar", action="store_true", help="Replace an existing different Avatar field")
     args = parser.parse_args()
 
     workspace = Path(args.workspace).expanduser().resolve()
-    config_path = Path(args.config).expanduser().resolve() if args.config else workspace / "openclaw.json"
+    config_path = Path(args.config).expanduser().resolve() if args.config else default_config_path(workspace)
     identity_path = Path(args.identity).expanduser().resolve() if args.identity else workspace / "IDENTITY.md"
 
     if not config_path.exists():
@@ -179,7 +219,8 @@ def main() -> int:
         return 2
 
     config = load_json(config_path)
-    channel_path, channel = choose_discord_channel(config, args.channel)
+    channel_name = args.channel or infer_channel_name(workspace)
+    channel_path, channel = choose_discord_channel(config, channel_name)
     token = str(channel.get("token") or "").strip()
     if not token:
         print(f"Discord channel token is empty: {channel_path}", file=sys.stderr)
